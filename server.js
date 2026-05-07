@@ -14,6 +14,7 @@ const authRoutes = require('./routes/auth');
 const contactRoutes = require('./routes/contact');
 const productRoutes = require('./routes/product');
 const offerRoutes = require('./routes/offer');
+const orderRoutes = require('./routes/order');
 
 // Create Express app
 const app = express();
@@ -73,7 +74,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/contact', contactRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/offers', offerRoutes);
-
+app.use('/api/orders', orderRoutes);
 
 // Health check route
 app.get('/api/health', (req, res) => {
