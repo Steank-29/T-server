@@ -26,12 +26,35 @@ if (!fs.existsSync(uploadsDir)) {
   console.log('📁 Uploads directory created');
 }
 
+// Allowed origins for CORS
+const allowedOrigins = [
+  'https://tawakkol.vercel.app',
+  'https://www.tawakkol.tn',
+  'http://www.tawakkol.tn',
+  'https://tawakkol.tn',
+  'http://tawakkol.tn',
+  'http://localhost:2909',  // For local development
+  'http://localhost:3000'    // Common React dev port
+];
+
 // CORS configuration
 app.use(cors({
-  origin: process.env.CLIENT_URL || 'http://localhost:2909',
+  origin: function(origin, callback) {
+    // Allow requests with no origin (like mobile apps, curl, postman)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      console.log('❌ Blocked origin:', origin);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  exposedHeaders: ['Content-Range', 'X-Content-Range'],
+  maxAge: 86400, // 24 hours
 }));
 
 // Body parser middleware
@@ -91,12 +114,14 @@ app.get('/api/health', (req, res) => {
 app.get('/api', (req, res) => {
   res.json({
     success: true,
-    app: process.env.APP_NAME || 'Tawakkul API',
+    app: process.env.APP_NAME || 'Tawakkol API',
     version: '1.0.0',
     endpoints: {
       auth: '/api/auth',
       contact: '/api/contact',
       products: '/api/products',
+      offers: '/api/offers',
+      orders: '/api/orders',
       health: '/api/health',
     },
   });
@@ -106,9 +131,9 @@ app.get('/api', (req, res) => {
 app.get('/', (req, res) => {
   res.json({ 
     success: true,
-    app: process.env.APP_NAME || 'Tawakkul',
+    app: process.env.APP_NAME || 'Tawakkol',
     version: '1.0.0',
-    description: 'E-commerce API for Tawakkul brand',
+    description: 'E-commerce API for Tawakkol brand',
   });
 });
 
@@ -137,6 +162,14 @@ app.use((err, req, res, next) => {
     return res.status(400).json({
       success: false,
       message: err.message,
+    });
+  }
+
+  // CORS error
+  if (err.message === 'Not allowed by CORS') {
+    return res.status(403).json({
+      success: false,
+      message: 'CORS blocked: Origin not allowed',
     });
   }
 
@@ -208,9 +241,9 @@ process.on('uncaughtException', (err) => {
 const PORT = process.env.PORT || 5000;
 const server = app.listen(PORT, () => {
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  console.log(`🚀 ${process.env.APP_NAME || 'Tawakkul'} Server Running`);
-  console.log(`📍 API: http://localhost:${PORT}/api`);
-  console.log(`🏥 Health: http://localhost:${PORT}/api/health`);
+  console.log(`🚀 ${process.env.APP_NAME || 'Tawakkol'} Server Running`);
+  console.log(`📍 API: ${process.env.API_URL}/api`);
+  console.log(`🏥 Health: ${process.env.API_URL}/api/health`);
   console.log(`📦 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 });
