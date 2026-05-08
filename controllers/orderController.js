@@ -1,23 +1,324 @@
 const Order = require('../models/Order');
 const Product = require('../models/Product');
 const Offer = require('../models/Offer');
+const sendEmail = require('../utils/sendEmail');
+const crypto = require('crypto');
 
-// Helper function to generate order number
+// Helper function to generate unique order number
 const generateOrderNumber = async () => {
   const date = new Date();
   const year = date.getFullYear().toString().slice(-2);
   const month = (date.getMonth() + 1).toString().padStart(2, '0');
   const day = date.getDate().toString().padStart(2, '0');
+  const hours = date.getHours().toString().padStart(2, '0');
+  const minutes = date.getMinutes().toString().padStart(2, '0');
+  const seconds = date.getSeconds().toString().padStart(2, '0');
   
-  const todayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-  const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
+  const random = crypto.randomBytes(2).toString('hex').toUpperCase().slice(0, 4);
+  const orderNumber = `TAW-${year}${month}${day}-${hours}${minutes}${seconds}-${random}`;
   
-  const count = await Order.countDocuments({
-    createdAt: { $gte: todayStart, $lt: todayEnd },
-  });
+  const existingOrder = await Order.findOne({ orderNumber });
+  if (existingOrder) {
+    const newRandom = crypto.randomBytes(3).toString('hex').toUpperCase().slice(0, 4);
+    return `TAW-${year}${month}${day}-${hours}${minutes}${seconds}-${newRandom}`;
+  }
   
-  const sequential = (count + 1).toString().padStart(4, '0');
-  return `TAW-${year}${month}${day}-${sequential}`;
+  return orderNumber;
+};
+
+// Helper function to send order confirmation emails
+const sendOrderEmails = async (order) => {
+  const appName = process.env.APP_NAME || 'Tawakkul';
+  const appUrl = process.env.APP_URL || 'https://www.tawakkol.tn';
+  const adminEmail = process.env.EMAIL_ADMIN || 'samijlassi2909@gmail.com';
+
+  // Format items for email
+  const itemsHtml = order.items.map((item, index) => `
+    <tr style="border-bottom: 1px solid #e8e8e8;">
+      <td style="padding: 12px 8px;">
+        <div style="display: flex; align-items: center; gap: 12px;">
+          ${item.image ? `<img src="${item.image}" alt="${item.name}" style="width: 50px; height: 50px; object-fit: cover; border-radius: 8px;" />` : ''}
+          <div>
+            <p style="margin: 0; font-weight: 600; color: #141010;">${item.name}</p>
+            <p style="margin: 4px 0 0; font-size: 13px; color: #888;">
+              Size: ${item.size} | Qty: ${item.quantity}
+              ${item.discount > 0 ? ` | <span style="color: #c31919;">-${item.discount}% OFF</span>` : ''}
+            </p>
+          </div>
+        </div>
+      </td>
+      <td style="padding: 12px 8px; text-align: right; font-weight: 600; color: #141010;">
+        ${item.discountedPrice.toFixed(2)} TND
+      </td>
+    </tr>
+  `).join('');
+
+  // ==================== ADMIN EMAIL ====================
+  const adminEmailHtml = `
+    <div style="font-family: Arial, sans-serif; max-width: 650px; margin: 0 auto; padding: 20px;">
+      <!-- Header -->
+      <div style="background: #0D0D0D; padding: 24px; border-radius: 12px 12px 0 0;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <h2 style="color: #ffffff; margin: 0; font-size: 20px;">🛍️ New Order Received</h2>
+          <span style="background: #22C55E; color: #ffffff; padding: 6px 14px; border-radius: 20px; font-size: 13px; font-weight: 600;">
+            ${order.paymentMethod === 'cash_on_delivery' ? 'Cash on Delivery' : order.paymentMethod}
+          </span>
+        </div>
+        <p style="color: #aaa; margin: 8px 0 0; font-size: 14px;">
+          Order #${order.orderNumber} • ${new Date(order.createdAt).toLocaleString()}
+        </p>
+      </div>
+
+      <!-- Content -->
+      <div style="background: #ffffff; padding: 24px; border: 1px solid #e8e8e8; border-top: none; border-radius: 0 0 12px 12px;">
+        
+        <!-- Customer Info -->
+        <div style="background: #fafafa; padding: 16px; border-radius: 8px; margin-bottom: 20px;">
+          <h3 style="margin: 0 0 12px; color: #141010; font-size: 16px;">👤 Customer Information</h3>
+          <table style="width: 100%; border-collapse: collapse;">
+            <tr>
+              <td style="padding: 4px 0; color: #888; font-weight: 600; width: 80px;">Name:</td>
+              <td style="padding: 4px 0; color: #141010; font-weight: 500;">${order.customer.fullName}</td>
+            </tr>
+            <tr>
+              <td style="padding: 4px 0; color: #888; font-weight: 600;">Email:</td>
+              <td style="padding: 4px 0; color: #141010;">${order.customer.email}</td>
+            </tr>
+            <tr>
+              <td style="padding: 4px 0; color: #888; font-weight: 600;">Phone:</td>
+              <td style="padding: 4px 0; color: #141010;">${order.customer.phone}</td>
+            </tr>
+            <tr>
+              <td style="padding: 4px 0; color: #888; font-weight: 600;">Address:</td>
+              <td style="padding: 4px 0; color: #141010;">${order.customer.address}</td>
+            </tr>
+            ${order.customer.notes ? `
+            <tr>
+              <td style="padding: 4px 0; color: #888; font-weight: 600;">Notes:</td>
+              <td style="padding: 4px 0; color: #c31919; font-style: italic;">${order.customer.notes}</td>
+            </tr>
+            ` : ''}
+          </table>
+        </div>
+
+        <!-- Order Items -->
+        <h3 style="margin: 0 0 12px; color: #141010; font-size: 16px;">📦 Order Items (${order.items.length})</h3>
+        <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
+          <thead>
+            <tr style="background: #fafafa;">
+              <th style="padding: 10px 8px; text-align: left; color: #888; font-size: 13px; text-transform: uppercase;">Item</th>
+              <th style="padding: 10px 8px; text-align: right; color: #888; font-size: 13px; text-transform: uppercase;">Price</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${itemsHtml}
+          </tbody>
+        </table>
+
+        <!-- Order Summary -->
+        <div style="background: #fafafa; padding: 16px; border-radius: 8px;">
+          <table style="width: 100%; border-collapse: collapse;">
+            <tr>
+              <td style="padding: 6px 0; color: #888;">Subtotal (${order.items.reduce((sum, item) => sum + item.quantity, 0)} items)</td>
+              <td style="padding: 6px 0; text-align: right; color: #141010; font-weight: 500;">${order.totalAmount.toFixed(2)} TND</td>
+            </tr>
+            ${order.discountAmount > 0 ? `
+            <tr>
+              <td style="padding: 6px 0; color: #22C55E;">Discount</td>
+              <td style="padding: 6px 0; text-align: right; color: #22C55E; font-weight: 500;">-${order.discountAmount.toFixed(2)} TND</td>
+            </tr>
+            ` : ''}
+            <tr>
+              <td style="padding: 6px 0; color: #888;">Shipping</td>
+              <td style="padding: 6px 0; text-align: right; color: #141010; font-weight: 500;">
+                ${order.shippingCost === 0 ? '<span style="color: #22C55E;">FREE</span>' : `${order.shippingCost.toFixed(2)} TND`}
+              </td>
+            </tr>
+            <tr style="border-top: 2px solid #e8e8e8;">
+              <td style="padding: 10px 0; font-weight: 700; color: #141010; font-size: 16px;">Total</td>
+              <td style="padding: 10px 0; text-align: right; font-weight: 700; color: #c31919; font-size: 18px;">${order.finalAmount.toFixed(2)} TND</td>
+            </tr>
+          </table>
+        </div>
+
+        <!-- Action Buttons -->
+        <div style="margin-top: 20px; text-align: center;">
+          <a href="${appUrl}/admin/orders/${order._id}" style="display: inline-block; background: #0D0D0D; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: 600; margin: 0 6px;">
+            📋 View Order Details
+          </a>
+        </div>
+      </div>
+
+      <!-- Footer -->
+      <div style="text-align: center; padding: 16px; color: #aaa; font-size: 12px;">
+        <p>This is an automated notification from ${appName} Order System</p>
+      </div>
+    </div>
+  `;
+
+  // ==================== CUSTOMER EMAIL ====================
+  const customerEmailHtml = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+      <!-- Header -->
+      <div style="text-align: center; padding: 30px 20px; background: #0D0D0D; border-radius: 12px 12px 0 0;">
+        <h1 style="color: #ffffff; margin: 0; font-size: 28px;">${appName}</h1>
+        <div style="background: #c31919; height: 3px; width: 50px; margin: 15px auto;"></div>
+        <p style="color: #aaa; margin: 10px 0 0;">Order Confirmation</p>
+      </div>
+
+      <!-- Content -->
+      <div style="background: #ffffff; padding: 24px; border: 1px solid #e8e8e8; border-top: none; border-radius: 0 0 12px 12px;">
+        
+        <!-- Success Message -->
+        <div style="text-align: center; margin-bottom: 24px;">
+          <div style="width: 60px; height: 60px; background: #22C55E; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 12px;">
+            <span style="color: #ffffff; font-size: 28px;">✓</span>
+          </div>
+          <h2 style="color: #141010; margin: 0;">Order Placed Successfully!</h2>
+          <p style="color: #888; margin: 8px 0;">Thank you for your order, ${order.customer.fullName}!</p>
+        </div>
+
+        <!-- Order Number -->
+        <div style="background: #fafafa; padding: 16px; border-radius: 8px; text-align: center; margin-bottom: 20px; border: 1px dashed #e0e0e0;">
+          <p style="margin: 0; color: #888; font-size: 13px;">Order Number</p>
+          <p style="margin: 4px 0 0; font-size: 20px; font-weight: 700; color: #c31919; letter-spacing: 1px;">${order.orderNumber}</p>
+        </div>
+
+        <!-- Customer & Delivery Info -->
+        <div style="display: flex; gap: 16px; margin-bottom: 20px;">
+          <div style="flex: 1; background: #fafafa; padding: 12px; border-radius: 8px;">
+            <p style="margin: 0; font-weight: 600; color: #141010; font-size: 14px;">👤 Customer</p>
+            <p style="margin: 4px 0 0; color: #666; font-size: 13px;">${order.customer.fullName}</p>
+            <p style="margin: 2px 0 0; color: #666; font-size: 13px;">${order.customer.phone}</p>
+          </div>
+          <div style="flex: 1; background: #fafafa; padding: 12px; border-radius: 8px;">
+            <p style="margin: 0; font-weight: 600; color: #141010; font-size: 14px;">📍 Delivery</p>
+            <p style="margin: 4px 0 0; color: #666; font-size: 13px;">${order.customer.address}</p>
+          </div>
+        </div>
+
+        <!-- Order Items -->
+        <h3 style="margin: 0 0 12px; color: #141010; font-size: 16px;">📦 Your Order</h3>
+        <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
+          <thead>
+            <tr style="background: #fafafa;">
+              <th style="padding: 10px 8px; text-align: left; color: #888; font-size: 13px;">Item</th>
+              <th style="padding: 10px 8px; text-align: center; color: #888; font-size: 13px;">Qty</th>
+              <th style="padding: 10px 8px; text-align: right; color: #888; font-size: 13px;">Price</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${order.items.map(item => `
+              <tr style="border-bottom: 1px solid #f0f0f0;">
+                <td style="padding: 10px 8px;">
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    ${item.image ? `<img src="${item.image}" alt="${item.name}" style="width: 40px; height: 40px; object-fit: cover; border-radius: 6px;" />` : ''}
+                    <div>
+                      <p style="margin: 0; font-weight: 500; color: #141010; font-size: 13px;">${item.name}</p>
+                      <p style="margin: 2px 0 0; font-size: 11px; color: #888;">Size: ${item.size}</p>
+                    </div>
+                  </div>
+                </td>
+                <td style="padding: 10px 8px; text-align: center; color: #141010; font-weight: 600;">${item.quantity}</td>
+                <td style="padding: 10px 8px; text-align: right; color: #141010; font-weight: 600;">${item.discountedPrice.toFixed(2)} TND</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+
+        <!-- Order Summary -->
+        <div style="background: #fafafa; padding: 16px; border-radius: 8px; margin-bottom: 20px;">
+          <table style="width: 100%; border-collapse: collapse;">
+            <tr>
+              <td style="padding: 6px 0; color: #888;">Subtotal</td>
+              <td style="padding: 6px 0; text-align: right; color: #141010;">${order.totalAmount.toFixed(2)} TND</td>
+            </tr>
+            ${order.discountAmount > 0 ? `
+            <tr>
+              <td style="padding: 6px 0; color: #22C55E;">Discount</td>
+              <td style="padding: 6px 0; text-align: right; color: #22C55E;">-${order.discountAmount.toFixed(2)} TND</td>
+            </tr>
+            ` : ''}
+            <tr>
+              <td style="padding: 6px 0; color: #888;">Shipping</td>
+              <td style="padding: 6px 0; text-align: right; color: #141010;">
+                ${order.shippingCost === 0 ? '<span style="color: #22C55E;">FREE</span>' : `${order.shippingCost.toFixed(2)} TND`}
+              </td>
+            </tr>
+            <tr style="border-top: 2px solid #e0e0e0;">
+              <td style="padding: 10px 0; font-weight: 700; color: #141010; font-size: 16px;">Total</td>
+              <td style="padding: 10px 0; text-align: right; font-weight: 700; color: #c31919; font-size: 18px;">${order.finalAmount.toFixed(2)} TND</td>
+            </tr>
+          </table>
+        </div>
+
+        <!-- Payment Method -->
+        <div style="background: #FFF3E0; padding: 12px 16px; border-radius: 8px; border-left: 4px solid #FF9800; margin-bottom: 20px;">
+          <p style="margin: 0; font-weight: 600; color: #E65100;">
+            💰 Payment Method: ${order.paymentMethod === 'cash_on_delivery' ? 'Cash on Delivery' : order.paymentMethod}
+          </p>
+          ${order.paymentMethod === 'cash_on_delivery' ? '<p style="margin: 4px 0 0; color: #666; font-size: 13px;">Please have the exact amount ready upon delivery.</p>' : ''}
+        </div>
+
+        <!-- What's Next -->
+        <div style="margin-bottom: 20px;">
+          <h3 style="color: #141010; font-size: 16px; margin: 0 0 8px;">📋 What's Next?</h3>
+          <ol style="color: #666; margin: 0; padding-left: 20px; line-height: 1.8;">
+            <li>We'll process your order within 24 hours</li>
+            <li>You'll receive a shipping confirmation with tracking details</li>
+            <li>Expected delivery: <strong>3-5 business days</strong></li>
+          </ol>
+        </div>
+
+        <!-- CTA Buttons -->
+        <div style="text-align: center; margin-bottom: 20px;">
+          <a href="${appUrl}/track-order?order=${order.orderNumber}" style="display: inline-block; background: #0D0D0D; color: #ffffff; padding: 12px 28px; text-decoration: none; border-radius: 8px; font-weight: 600; margin: 0 6px;">
+            📍 Track Order
+          </a>
+          <a href="${appUrl}" style="display: inline-block; background: #ffffff; color: #0D0D0D; padding: 12px 28px; text-decoration: none; border-radius: 8px; font-weight: 600; border: 2px solid #0D0D0D; margin: 0 6px;">
+            🛍️ Continue Shopping
+          </a>
+        </div>
+
+        <!-- Contact Info -->
+        <div style="border-top: 1px solid #e8e8e8; padding-top: 16px; text-align: center;">
+          <p style="margin: 0; color: #888; font-size: 13px;">Need help? Contact us at</p>
+          <p style="margin: 4px 0; font-weight: 600; color: #141010;">${adminEmail}</p>
+          <p style="margin: 4px 0; color: #888; font-size: 13px;">or call +216 12 345 678</p>
+        </div>
+      </div>
+
+      <!-- Footer -->
+      <div style="text-align: center; padding: 16px; color: #aaa; font-size: 11px;">
+        <p>${appName} © ${new Date().getFullYear()}. All rights reserved.</p>
+        <p>This email was sent to ${order.customer.email} regarding order #${order.orderNumber}</p>
+      </div>
+    </div>
+  `;
+
+  // Send admin notification
+  try {
+    await sendEmail({
+      email: adminEmail,
+      subject: `🔔 New Order #${order.orderNumber} - ${order.customer.fullName} (${order.finalAmount.toFixed(2)} TND)`,
+      html: adminEmailHtml
+    });
+    console.log(`✅ Admin notification sent for order #${order.orderNumber}`);
+  } catch (error) {
+    console.error('❌ Admin email failed:', error.message);
+  }
+
+  // Send customer confirmation
+  try {
+    await sendEmail({
+      email: order.customer.email,
+      subject: `✅ Order Confirmed #${order.orderNumber} - ${appName}`,
+      html: customerEmailHtml
+    });
+    console.log(`✅ Customer confirmation sent to ${order.customer.email}`);
+  } catch (error) {
+    console.error('❌ Customer email failed:', error.message);
+  }
 };
 
 // @desc    Create new order
@@ -124,26 +425,64 @@ exports.createOrder = async (req, res) => {
       discountAmount += (price - discountedPrice) * quantity;
     }
 
-    // Calculate final amount BEFORE adding shipping
+    // Calculate final amount
     const subtotalAmount = parseFloat((totalAmount - discountAmount).toFixed(2));
-    
-    // Add shipping cost (default to 0 if not provided)
     const shippingCostAmount = parseFloat(shippingCost) || 0;
     const finalAmount = parseFloat((subtotalAmount + shippingCostAmount).toFixed(2));
 
-    // Generate order number
-    const orderNumber = await generateOrderNumber();
+    // Generate order number with retry logic
+    let orderNumber;
+    let order;
+    let retryCount = 0;
+    const maxRetries = 3;
 
-    // Create order
-    const order = await Order.create({
-      orderNumber,
-      customer,
-      items: orderItems,
-      totalAmount,
-      discountAmount,
-      finalAmount, // This now includes shipping
-      shippingCost: shippingCostAmount, // Store shipping cost separately
-      paymentMethod: paymentMethod || 'cash_on_delivery',
+    while (retryCount < maxRetries) {
+      try {
+        orderNumber = await generateOrderNumber();
+        
+        order = await Order.create({
+          orderNumber,
+          customer,
+          items: orderItems,
+          totalAmount,
+          discountAmount,
+          finalAmount,
+          shippingCost: shippingCostAmount,
+          paymentMethod: paymentMethod || 'cash_on_delivery',
+        });
+        
+        break;
+      } catch (error) {
+        if (error.code === 11000 && error.keyPattern?.orderNumber) {
+          retryCount++;
+          console.log(`Order number collision detected, retry ${retryCount}/${maxRetries}`);
+          
+          if (retryCount >= maxRetries) {
+            orderNumber = `TAW-${Date.now()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+            order = await Order.create({
+              orderNumber,
+              customer,
+              items: orderItems,
+              totalAmount,
+              discountAmount,
+              finalAmount,
+              shippingCost: shippingCostAmount,
+              paymentMethod: paymentMethod || 'cash_on_delivery',
+            });
+            break;
+          }
+          
+          await new Promise(resolve => setTimeout(resolve, 100));
+          continue;
+        }
+        
+        throw error;
+      }
+    }
+
+    // ✅ Send order confirmation emails (don't await - send asynchronously)
+    sendOrderEmails(order).catch(err => {
+      console.error('Email sending failed:', err);
     });
 
     res.status(201).json({
@@ -154,11 +493,18 @@ exports.createOrder = async (req, res) => {
   } catch (error) {
     console.error('Order creation error:', error);
     
-    // Handle duplicate order number (rare race condition)
     if (error.code === 11000 && error.keyPattern?.orderNumber) {
       return res.status(409).json({
         success: false,
         message: 'Order number conflict, please try again',
+      });
+    }
+    
+    if (error.name === 'ValidationError') {
+      const messages = Object.values(error.errors).map(err => err.message);
+      return res.status(400).json({
+        success: false,
+        message: messages.join(', '),
       });
     }
     
@@ -186,6 +532,9 @@ exports.getOrders = async (req, res) => {
     } = req.query;
 
     const query = {};
+
+    // Exclude counter documents from order queries
+    query.__type = { $ne: 'counter' };
 
     // Filter by status
     if (status && status !== 'all') {
@@ -325,8 +674,7 @@ exports.updateOrderStatus = async (req, res) => {
           if (offer) {
             const stockItem = offer.stockBySize?.find(s => s.size === item.size);
             if (stockItem) {
-              stockItem.reserved = (stockItem.reserved || 0) - item.quantity;
-              if (stockItem.reserved < 0) stockItem.reserved = 0;
+              stockItem.reserved = Math.max(0, (stockItem.reserved || 0) - item.quantity);
               await offer.save();
             }
           }
@@ -335,8 +683,7 @@ exports.updateOrderStatus = async (req, res) => {
           if (product) {
             const stockItem = product.stockBySize?.find(s => s.size === item.size);
             if (stockItem) {
-              stockItem.reserved = (stockItem.reserved || 0) - item.quantity;
-              if (stockItem.reserved < 0) stockItem.reserved = 0;
+              stockItem.reserved = Math.max(0, (stockItem.reserved || 0) - item.quantity);
               await product.save();
             }
           }
@@ -393,8 +740,7 @@ exports.cancelOrder = async (req, res) => {
         if (offer) {
           const stockItem = offer.stockBySize?.find(s => s.size === item.size);
           if (stockItem) {
-            stockItem.reserved = (stockItem.reserved || 0) - item.quantity;
-            if (stockItem.reserved < 0) stockItem.reserved = 0;
+            stockItem.reserved = Math.max(0, (stockItem.reserved || 0) - item.quantity);
             await offer.save();
           }
         }
@@ -403,8 +749,7 @@ exports.cancelOrder = async (req, res) => {
         if (product) {
           const stockItem = product.stockBySize?.find(s => s.size === item.size);
           if (stockItem) {
-            stockItem.reserved = (stockItem.reserved || 0) - item.quantity;
-            if (stockItem.reserved < 0) stockItem.reserved = 0;
+            stockItem.reserved = Math.max(0, (stockItem.reserved || 0) - item.quantity);
             await product.save();
           }
         }
@@ -468,9 +813,13 @@ exports.getOrderStats = async (req, res) => {
     const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
     const lastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
 
+    // Base query to exclude counters
+    const baseQuery = { __type: { $ne: 'counter' } };
+
     const [overall, todayStats, monthlyStats, statusBreakdown] = await Promise.all([
       // Overall stats
       Order.aggregate([
+        { $match: baseQuery },
         {
           $group: {
             _id: null,
@@ -487,6 +836,7 @@ exports.getOrderStats = async (req, res) => {
       Order.aggregate([
         {
           $match: {
+            ...baseQuery,
             createdAt: {
               $gte: new Date(today.getFullYear(), today.getMonth(), today.getDate()),
               $lt: new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1),
@@ -505,6 +855,7 @@ exports.getOrderStats = async (req, res) => {
       Order.aggregate([
         {
           $match: {
+            ...baseQuery,
             createdAt: { $gte: firstDayOfMonth },
           },
         },
@@ -518,6 +869,7 @@ exports.getOrderStats = async (req, res) => {
       ]),
       // Status breakdown
       Order.aggregate([
+        { $match: baseQuery },
         {
           $group: {
             _id: '$status',
@@ -569,6 +921,14 @@ exports.deleteOrder = async (req, res) => {
       });
     }
 
+    // Prevent deleting counter documents
+    if (order.__type === 'counter') {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot delete counter documents',
+      });
+    }
+
     // If order is not cancelled or delivered, release stock
     if (order.status !== 'cancelled' && order.status !== 'delivered') {
       for (const item of order.items) {
@@ -577,8 +937,7 @@ exports.deleteOrder = async (req, res) => {
           if (offer) {
             const stockItem = offer.stockBySize?.find(s => s.size === item.size);
             if (stockItem) {
-              stockItem.reserved = (stockItem.reserved || 0) - item.quantity;
-              if (stockItem.reserved < 0) stockItem.reserved = 0;
+              stockItem.reserved = Math.max(0, (stockItem.reserved || 0) - item.quantity);
               await offer.save();
             }
           }
@@ -587,8 +946,7 @@ exports.deleteOrder = async (req, res) => {
           if (product) {
             const stockItem = product.stockBySize?.find(s => s.size === item.size);
             if (stockItem) {
-              stockItem.reserved = (stockItem.reserved || 0) - item.quantity;
-              if (stockItem.reserved < 0) stockItem.reserved = 0;
+              stockItem.reserved = Math.max(0, (stockItem.reserved || 0) - item.quantity);
               await product.save();
             }
           }
