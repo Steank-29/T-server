@@ -20,46 +20,28 @@ const { protect, authorize } = require('../middleware/auth');
 const upload = require('../middleware/upload');
 
 // ========== PUBLIC ROUTES (No Auth Required) ==========
-// Note: Some routes are public but with limited data (you might want to hide stock info for public)
 router.get('/', getProducts);
 router.get('/stats', getProductStats);
 router.get('/export', exportProducts);
-router.get('/:id', getProductById);
 
 // ========== PROTECTED ROUTES (Auth Required) ==========
 
-// Process order stock deduction (when order is delivered/completed)
-router.post(
-  '/process-order-stock',
-  protect,
-  authorize('admin'),
-  processOrderStock
-);
+// ✅ IMPORTANT: Specific routes MUST come before /:id routes
 
-// Release reserved stock (when order is cancelled)
-router.post(
-  '/release-order-stock',
-  protect,
-  authorize('admin'),
-  releaseOrderStock
-);
+// Stock tracking dashboard
+router.get('/stock-tracking', protect, authorize('admin'), getStockTracking);
 
-// Get comprehensive stock tracking dashboard
-router.get(
-  '/stock-tracking',
-  protect,
-  authorize('admin'),
-  getStockTracking
-);
+// Low stock products
+router.get('/low-stock', protect, authorize('admin'), getLowStockProducts);
 
-// Get stock history for specific product size
-router.get(
-  '/:id/stock-history/:size',
-  protect,
-  authorize('admin'),
-  getProductStockHistory
-);
+// Process order stock deduction
+router.post('/process-order-stock', protect, authorize('admin'), processOrderStock);
 
+// Release reserved stock
+router.post('/release-order-stock', protect, authorize('admin'), releaseOrderStock);
+
+// Bulk delete
+router.delete('/bulk', protect, authorize('admin'), bulkDeleteProducts);
 
 // Product Management
 router.post(
@@ -73,6 +55,8 @@ router.post(
   createProduct
 );
 
+// ✅ These /:id routes must come AFTER specific routes
+router.get('/:id', getProductById);
 router.put(
   '/:id',
   protect,
@@ -83,18 +67,8 @@ router.put(
   ]),
   updateProduct
 );
-
 router.delete('/:id', protect, authorize('admin'), deleteProduct);
-router.delete('/bulk', protect, authorize('admin'), bulkDeleteProducts);
-
-// Stock Management Routes
-router.get('/low-stock', protect, authorize('admin'), getLowStockProducts);
 router.patch('/:id/stock', protect, authorize('admin'), updateProductStock);
-
-// Optional: Additional stock management endpoints (uncomment as needed)
-// router.get('/:id/stock/:size', protect, authorize('admin'), getProductStockBySize);
-// router.post('/:id/stock/reserve', protect, authorize('admin'), reserveStock);
-// router.post('/:id/stock/release', protect, authorize('admin'), releaseStock);
-// router.post('/:id/stock/confirm', protect, authorize('admin'), confirmStockDeduction);
+router.get('/:id/stock-history/:size', protect, authorize('admin'), getProductStockHistory);
 
 module.exports = router;
