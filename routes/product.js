@@ -11,6 +11,10 @@ const {
   exportProducts,
   updateProductStock,
   getLowStockProducts,
+  processOrderStock,
+  releaseOrderStock,
+  getStockTracking,
+  getProductStockHistory,
 } = require('../controllers/productController');
 const { protect, authorize } = require('../middleware/auth');
 const upload = require('../middleware/upload');
@@ -23,6 +27,39 @@ router.get('/export', exportProducts);
 router.get('/:id', getProductById);
 
 // ========== PROTECTED ROUTES (Auth Required) ==========
+
+// Process order stock deduction (when order is delivered/completed)
+router.post(
+  '/process-order-stock',
+  protect,
+  authorize('admin'),
+  processOrderStock
+);
+
+// Release reserved stock (when order is cancelled)
+router.post(
+  '/release-order-stock',
+  protect,
+  authorize('admin'),
+  releaseOrderStock
+);
+
+// Get comprehensive stock tracking dashboard
+router.get(
+  '/stock-tracking',
+  protect,
+  authorize('admin'),
+  getStockTracking
+);
+
+// Get stock history for specific product size
+router.get(
+  '/:id/stock-history/:size',
+  protect,
+  authorize('admin'),
+  getProductStockHistory
+);
+
 
 // Product Management
 router.post(

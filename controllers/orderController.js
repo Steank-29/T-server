@@ -328,11 +328,19 @@ exports.createOrder = async (req, res) => {
   try {
     const { customer, items, paymentMethod, shippingCost } = req.body;
 
-    // Validate customer data
-    if (!customer || !customer.fullName || !customer.email || !customer.phone || !customer.address) {
+    // Validate customer data (email is now optional)
+    if (!customer || !customer.fullName || !customer.phone || !customer.address) {
       return res.status(400).json({
         success: false,
-        message: 'Please provide all required customer information',
+        message: 'Please provide all required customer information (fullName, phone, address)',
+      });
+    }
+
+    // Validate email format if provided
+    if (customer.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customer.email)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide a valid email address',
       });
     }
 
@@ -430,6 +438,15 @@ exports.createOrder = async (req, res) => {
     const shippingCostAmount = parseFloat(shippingCost) || 0;
     const finalAmount = parseFloat((subtotalAmount + shippingCostAmount).toFixed(2));
 
+    // Prepare customer data with optional email
+    const customerData = {
+      fullName: customer.fullName,
+      email: customer.email || '', // Set empty string if not provided
+      phone: customer.phone,
+      address: customer.address,
+      notes: customer.notes || '',
+    };
+
     // Generate order number with retry logic
     let orderNumber;
     let order;
@@ -442,7 +459,7 @@ exports.createOrder = async (req, res) => {
         
         order = await Order.create({
           orderNumber,
-          customer,
+          customer: customerData,
           items: orderItems,
           totalAmount,
           discountAmount,
@@ -461,7 +478,7 @@ exports.createOrder = async (req, res) => {
             orderNumber = `TAW-${Date.now()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
             order = await Order.create({
               orderNumber,
-              customer,
+              customer: customerData,
               items: orderItems,
               totalAmount,
               discountAmount,
@@ -480,14 +497,18 @@ exports.createOrder = async (req, res) => {
       }
     }
 
-    // ✅ Send order confirmation emails (don't await - send asynchronously)
-    sendOrderEmails(order).catch(err => {
-      console.error('Email sending failed:', err);
-    });
+    // ✅ Send order confirmation emails ONLY if email is provided
+    if (customer.email) {
+      sendOrderEmails(order).catch(err => {
+        console.error('Email sending failed:', err);
+      });
+    } else {
+      console.log(`ℹ️ No email provided for order #${order.orderNumber}, skipping email notifications`);
+    }
 
     res.status(201).json({
       success: true,
-      message: 'Order placed successfully!',
+      message: 'Order placed successfully!' + (customer.email ? '' : ' No confirmation email will be sent.'),
       data: order,
     });
   } catch (error) {

@@ -35,6 +35,360 @@ const parseStockBySize = (stockData) => {
   }
 };
 
+
+// @desc    Process order stock deduction (when order is confirmed/delivered)
+// @route   POST /api/products/process-order-stock
+// @access  Private/Admin
+const processOrderStock = async (req, res) => {
+  try {
+    const { items } = req.body; // Array of { productId, size, quantity }
+
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide items array with productId, size, and quantity',
+      });
+    }
+
+    const results = [];
+    const errors = [];
+
+    // Process each item
+    for (const item of items) {
+      try {
+        const { productId, size, quantity } = item;
+
+        if (!productId || !size || !quantity) {
+          errors.push({
+            productId,
+            message: 'Missing productId, size, or quantity',
+          });
+          continue;
+        }
+
+        const product = await Product.findById(productId);
+
+        if (!product) {
+          errors.push({
+            productId,
+            message: 'Product not found',
+          });
+          continue;
+        }
+
+        // Find the size stock
+        const sizeStock = product.stockBySize.find(s => s.size === size);
+
+        if (!sizeStock) {
+          errors.push({
+            productId,
+            size,
+            message: `Size ${size} not available for this product`,
+          });
+          continue;
+        }
+
+        // Check if enough available stock (excluding reserved)
+        const availableStock = sizeStock.quantity - sizeStock.reserved;
+
+        if (availableStock < quantity) {
+          errors.push({
+            productId,
+            size,
+            productName: product.name,
+            message: `Insufficient stock. Available: ${availableStock}, Requested: ${quantity}`,
+          });
+          continue;
+        }
+
+        // Deduct stock (both quantity and reserved if order was reserved)
+        const oldQuantity = sizeStock.quantity;
+        const oldReserved = sizeStock.reserved;
+
+        sizeStock.quantity -= quantity;
+        
+        // If this was from a reserved order, also reduce reserved
+        if (sizeStock.reserved >= quantity) {
+          sizeStock.reserved -= quantity;
+        } else {
+          sizeStock.reserved = 0;
+        }
+
+        // Update sales count
+        product.salesCount = (product.salesCount || 0) + quantity;
+
+        await product.save();
+
+        results.push({
+          productId,
+          productName: product.name,
+          size,
+          quantityDeducted: quantity,
+          previousStock: oldQuantity,
+          newStock: sizeStock.quantity,
+          previousReserved: oldReserved,
+          newReserved: sizeStock.reserved,
+          availableStock: sizeStock.quantity - sizeStock.reserved,
+          isLowStock: (sizeStock.quantity - sizeStock.reserved) <= product.lowStockThreshold,
+        });
+      } catch (error) {
+        errors.push({
+          productId: item.productId,
+          message: error.message,
+        });
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `Processed ${results.length} items successfully${errors.length > 0 ? `, ${errors.length} failed` : ''}`,
+      data: {
+        processed: results,
+        failed: errors,
+      },
+    });
+  } catch (error) {
+    console.error('Error processing order stock:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while processing order stock',
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Release reserved stock (when order is cancelled)
+// @route   POST /api/products/release-order-stock
+// @access  Private/Admin
+const releaseOrderStock = async (req, res) => {
+  try {
+    const { items } = req.body; // Array of { productId, size, quantity }
+
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide items array',
+      });
+    }
+
+    const results = [];
+    const errors = [];
+
+    for (const item of items) {
+      try {
+        const { productId, size, quantity } = item;
+        const product = await Product.findById(productId);
+
+        if (!product) {
+          errors.push({ productId, message: 'Product not found' });
+          continue;
+        }
+
+        const sizeStock = product.stockBySize.find(s => s.size === size);
+
+        if (!sizeStock) {
+          errors.push({ productId, size, message: 'Size not found' });
+          continue;
+        }
+
+        // Release reserved stock
+        if (sizeStock.reserved >= quantity) {
+          sizeStock.reserved -= quantity;
+        } else {
+          sizeStock.reserved = 0;
+        }
+
+        await product.save();
+
+        results.push({
+          productId,
+          productName: product.name,
+          size,
+          quantityReleased: quantity,
+          newReserved: sizeStock.reserved,
+          totalStock: sizeStock.quantity,
+          availableStock: sizeStock.quantity - sizeStock.reserved,
+        });
+      } catch (error) {
+        errors.push({ productId: item.productId, message: error.message });
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `Released stock for ${results.length} items`,
+      data: { processed: results, failed: errors },
+    });
+  } catch (error) {
+    console.error('Error releasing stock:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while releasing stock',
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Get detailed stock tracking by sizes
+// @route   GET /api/products/stock-tracking
+// @access  Private/Admin
+const getStockTracking = async (req, res) => {
+  try {
+    const { 
+      productId, 
+      size, 
+      lowStock = 'false',
+      category,
+      status = 'active',
+      sortBy = 'name',
+    } = req.query;
+
+    const filter = {};
+
+    if (productId) {
+      filter._id = productId;
+    }
+
+    if (category) {
+      filter.category = category;
+    }
+
+    if (status) {
+      filter.status = status;
+    }
+
+    const products = await Product.find(filter)
+      .select('name price category status totalStock lowStockThreshold stockBySize salesCount')
+      .sort(sortBy);
+
+    let stockData = [];
+
+    for (const product of products) {
+      const sizeDetails = size 
+        ? product.stockBySize.filter(s => s.size === size)
+        : product.stockBySize;
+
+      for (const sizeStock of sizeDetails) {
+        const available = sizeStock.quantity - sizeStock.reserved;
+        const isLowStock = available <= product.lowStockThreshold;
+
+        // Skip if not low stock and filter is on
+        if (lowStock === 'true' && !isLowStock) continue;
+
+        stockData.push({
+          productId: product._id,
+          productName: product.name,
+          price: product.price,
+          category: product.category,
+          status: product.status,
+          size: sizeStock.size,
+          totalStock: sizeStock.quantity,
+          reserved: sizeStock.reserved,
+          availableStock: available,
+          lowStockThreshold: product.lowStockThreshold,
+          isLowStock,
+          stockStatus: available === 0 ? 'OUT_OF_STOCK' : isLowStock ? 'LOW_STOCK' : 'IN_STOCK',
+          location: sizeStock.location || 'Not specified',
+          salesCount: product.salesCount || 0,
+          stockValue: product.price * sizeStock.quantity,
+        });
+      }
+    }
+
+    // Summary statistics
+    const summary = {
+      totalProducts: products.length,
+      totalStockUnits: stockData.reduce((sum, item) => sum + item.totalStock, 0),
+      totalAvailableStock: stockData.reduce((sum, item) => sum + item.availableStock, 0),
+      totalReserved: stockData.reduce((sum, item) => sum + item.reserved, 0),
+      outOfStockSizes: stockData.filter(item => item.availableStock === 0).length,
+      lowStockSizes: stockData.filter(item => item.isLowStock && item.availableStock > 0).length,
+      inStockSizes: stockData.filter(item => !item.isLowStock).length,
+      totalInventoryValue: stockData.reduce((sum, item) => sum + item.stockValue, 0),
+    };
+
+    res.status(200).json({
+      success: true,
+      count: stockData.length,
+      summary,
+      data: stockData,
+    });
+  } catch (error) {
+    console.error('Error getting stock tracking:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while fetching stock tracking',
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Get stock history for a specific product size (if you add StockHistory model)
+// @route   GET /api/products/:id/stock-history/:size
+// @access  Private/Admin
+const getProductStockHistory = async (req, res) => {
+  try {
+    const product = await Product.findById(req.params.id);
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: 'Product not found',
+      });
+    }
+
+    const sizeStock = product.stockBySize.find(s => s.size === req.params.size);
+
+    if (!sizeStock) {
+      return res.status(404).json({
+        success: false,
+        message: `Size ${req.params.size} not found`,
+      });
+    }
+
+    // This would come from a StockHistory model if you implement it
+    // For now, return current stock with calculated metrics
+    const stockInfo = {
+      productId: product._id,
+      productName: product.name,
+      size: sizeStock.size,
+      currentData: {
+        totalStock: sizeStock.quantity,
+        reserved: sizeStock.reserved,
+        available: sizeStock.quantity - sizeStock.reserved,
+        location: sizeStock.location,
+        lastUpdated: product.updatedAt,
+      },
+      salesInfo: {
+        totalSales: product.salesCount || 0,
+        lowStockThreshold: product.lowStockThreshold,
+      },
+      // You can add actual history here if you create a StockHistory collection
+      history: [
+        {
+          date: product.updatedAt,
+          action: 'CURRENT_STATE',
+          details: `Available: ${sizeStock.quantity - sizeStock.reserved}, Reserved: ${sizeStock.reserved}`,
+        },
+      ],
+    };
+
+    res.status(200).json({
+      success: true,
+      data: stockInfo,
+    });
+  } catch (error) {
+    console.error('Error getting stock history:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while fetching stock history',
+      error: error.message,
+    });
+  }
+};
+
+
+
 // @desc    Create a new product
 // @route   POST /api/products
 // @access  Private/Admin
@@ -849,4 +1203,8 @@ module.exports = {
   exportProducts,
   updateProductStock,
   getLowStockProducts,
+  processOrderStock,
+  releaseOrderStock,
+  getStockTracking,
+  getProductStockHistory,
 };
