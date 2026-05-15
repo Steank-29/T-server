@@ -1192,6 +1192,45 @@ const getLowStockProducts = async (req, res) => {
   }
 };
 
+
+// @desc    Toggle product active/inactive status
+// @route   PATCH /api/products/:id/toggle-status
+// @access  Private/Admin
+const toggleProductStatus = async (req, res) => {
+  try {
+    const product = await Product.findById(req.params.id);
+    
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: 'Product not found',
+      });
+    }
+    
+    const newStatus = product.status === 'active' ? 'inactive' : 'active';
+    product.status = newStatus;
+    product.updatedBy = req.user.id;
+    await product.save();
+    
+    res.status(200).json({
+      success: true,
+      message: `Product ${newStatus === 'active' ? 'activated' : 'deactivated'} successfully`,
+      data: {
+        id: product._id,
+        status: product.status,
+        name: product.name,
+      },
+    });
+  } catch (error) {
+    console.error('Error toggling product status:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while toggling product status',
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   createProduct,
   getProducts,
@@ -1207,4 +1246,5 @@ module.exports = {
   releaseOrderStock,
   getStockTracking,
   getProductStockHistory,
+  toggleProductStatus
 };

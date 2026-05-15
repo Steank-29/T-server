@@ -15,6 +15,7 @@ const {
   releaseOrderStock,
   getStockTracking,
   getProductStockHistory,
+  toggleProductStatus
 } = require('../controllers/productController');
 const { protect, authorize } = require('../middleware/auth');
 const upload = require('../middleware/upload');
@@ -42,6 +43,9 @@ router.post('/release-order-stock', protect, authorize('admin'), releaseOrderSto
 
 // Bulk delete
 router.delete('/bulk', protect, authorize('admin'), bulkDeleteProducts);
+
+router.patch('/:id/toggle-status', protect, authorize('admin'), toggleProductStatus);
+
 
 // Product Management
 router.post(
