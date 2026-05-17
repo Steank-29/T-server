@@ -14,7 +14,7 @@ const {
 const { protect, authorize } = require('../middleware/auth');
 
 // Public routes
-router.post('/', createOrder);
+router.post('/post', createOrder);
 router.get('/track/:orderNumber', trackOrder);
 router.patch('/:id/cancel', cancelOrder);
 
