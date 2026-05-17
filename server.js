@@ -262,7 +262,7 @@ process.on('uncaughtException', (err) => {
 });
 
 // Start server
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 6060;
 const server = app.listen(PORT, () => {
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   console.log(`🚀 ${process.env.APP_NAME || 'Tawakkol'} Server Running`);
